@@ -37,6 +37,9 @@
 		<fileSet>
 			<directory>${project.basedir}/target</directory>
 			<outputDirectory>./</outputDirectory>
+			<excludes>
+				<exclude>*-sources.jar</exclude>
+			</excludes>
 			<includes>
 				<include>*.jar</include>
 			</includes>

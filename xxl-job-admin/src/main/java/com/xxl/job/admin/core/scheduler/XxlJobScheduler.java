@@ -1,29 +1,18 @@
 package com.xxl.job.admin.core.scheduler;
 
 import com.xxl.job.admin.core.conf.XxlJobAdminConfig;
-import com.xxl.job.admin.core.thread.JobFailMonitorHelper;
-import com.xxl.job.admin.core.thread.JobRegistryMonitorHelper;
-import com.xxl.job.admin.core.thread.JobScheduleHelper;
-import com.xxl.job.admin.core.thread.JobTriggerPoolHelper;
+import com.xxl.job.admin.core.thread.*;
 import com.xxl.job.admin.core.util.I18nUtil;
-import com.xxl.job.core.biz.AdminBiz;
 import com.xxl.job.core.biz.ExecutorBiz;
 import com.xxl.job.core.enums.ExecutorBlockStrategyEnum;
-import com.xxl.rpc.remoting.invoker.XxlRpcInvokerFactory;
 import com.xxl.rpc.remoting.invoker.call.CallType;
 import com.xxl.rpc.remoting.invoker.reference.XxlRpcReferenceBean;
 import com.xxl.rpc.remoting.invoker.route.LoadBalance;
-import com.xxl.rpc.remoting.net.NetEnum;
-import com.xxl.rpc.remoting.net.impl.servlet.server.ServletServerHandler;
-import com.xxl.rpc.remoting.provider.XxlRpcProviderFactory;
-import com.xxl.rpc.serialize.Serializer;
+import com.xxl.rpc.remoting.net.impl.netty_http.client.NettyHttpClient;
+import com.xxl.rpc.serialize.impl.HessianSerializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.servlet.ServletException;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
-import java.io.IOException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
@@ -39,9 +28,6 @@ public class XxlJobScheduler  {
         // init i18n
         initI18n();
 
-        // admin-server
-        initRpcProvider();
-
         // admin registry monitor run
         JobRegistryMonitorHelper.getInstance().start();
 
@@ -50,6 +36,9 @@ public class XxlJobScheduler  {
 
         // admin trigger pool start
         JobTriggerPoolHelper.toStart();
+
+        // admin log report start
+        JobLogReportHelper.getInstance().start();
 
         // start-schedule
         JobScheduleHelper.getInstance().start();
@@ -63,6 +52,9 @@ public class XxlJobScheduler  {
         // stop-schedule
         JobScheduleHelper.getInstance().toStop();
 
+        // admin log report stop
+        JobLogReportHelper.getInstance().toStop();
+
         // admin trigger pool stop
         JobTriggerPoolHelper.toStop();
 
@@ -72,8 +64,6 @@ public class XxlJobScheduler  {
         // admin registry stop
         JobRegistryMonitorHelper.getInstance().toStop();
 
-        // admin-server
-        stopRpcProvider();
     }
 
     // ---------------------- I18n ----------------------
@@ -83,34 +73,6 @@ public class XxlJobScheduler  {
             item.setTitle(I18nUtil.getString("jobconf_block_".concat(item.name())));
         }
     }
-
-    // ---------------------- admin rpc provider (no server version) ----------------------
-    private static ServletServerHandler servletServerHandler;
-    private void initRpcProvider(){
-        // init
-        XxlRpcProviderFactory xxlRpcProviderFactory = new XxlRpcProviderFactory();
-        xxlRpcProviderFactory.initConfig(
-                NetEnum.NETTY_HTTP,
-                Serializer.SerializeEnum.HESSIAN.getSerializer(),
-                null,
-                0,
-                XxlJobAdminConfig.getAdminConfig().getAccessToken(),
-                null,
-                null);
-
-        // add services
-        xxlRpcProviderFactory.addService(AdminBiz.class.getName(), null, XxlJobAdminConfig.getAdminConfig().getAdminBiz());
-
-        // servlet handler
-        servletServerHandler = new ServletServerHandler(xxlRpcProviderFactory);
-    }
-    private void stopRpcProvider() throws Exception {
-        XxlRpcInvokerFactory.getInstance().stop();
-    }
-    public static void invokeAdminService(HttpServletRequest request, HttpServletResponse response) throws IOException, ServletException {
-        servletServerHandler.handle(null, request, response);
-    }
-
 
     // ---------------------- executor-client ----------------------
     private static ConcurrentMap<String, ExecutorBiz> executorBizRepository = new ConcurrentHashMap<String, ExecutorBiz>();
@@ -128,18 +90,20 @@ public class XxlJobScheduler  {
         }
 
         // set-cache
-        executorBiz = (ExecutorBiz) new XxlRpcReferenceBean(
-                NetEnum.NETTY_HTTP,
-                Serializer.SerializeEnum.HESSIAN.getSerializer(),
-                CallType.SYNC,
-                LoadBalance.ROUND,
-                ExecutorBiz.class,
-                null,
-                3000,
-                address,
-                XxlJobAdminConfig.getAdminConfig().getAccessToken(),
-                null,
-                null).getObject();
+        XxlRpcReferenceBean referenceBean = new XxlRpcReferenceBean();
+        referenceBean.setClient(NettyHttpClient.class);
+        referenceBean.setSerializer(HessianSerializer.class);
+        referenceBean.setCallType(CallType.SYNC);
+        referenceBean.setLoadBalance(LoadBalance.ROUND);
+        referenceBean.setIface(ExecutorBiz.class);
+        referenceBean.setVersion(null);
+        referenceBean.setTimeout(3000);
+        referenceBean.setAddress(address);
+        referenceBean.setAccessToken(XxlJobAdminConfig.getAdminConfig().getAccessToken());
+        referenceBean.setInvokeCallback(null);
+        referenceBean.setInvokerFactory(null);
+
+        executorBiz = (ExecutorBiz) referenceBean.getObject();
 
         executorBizRepository.put(address, executorBiz);
         return executorBiz;

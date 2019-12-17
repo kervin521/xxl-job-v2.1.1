@@ -1,25 +1,8 @@
 package com.xxl.job.core.executor;
 
-import java.net.Inet4Address;
-import java.net.InetAddress;
-import java.net.NetworkInterface;
-import java.net.SocketException;
-import java.util.ArrayList;
-import java.util.Enumeration;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.TreeSet;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.util.StringUtils;
-
 import com.xxl.job.core.biz.AdminBiz;
 import com.xxl.job.core.biz.ExecutorBiz;
+import com.xxl.job.core.biz.client.AdminBizClient;
 import com.xxl.job.core.biz.impl.ExecutorBizImpl;
 import com.xxl.job.core.handler.IJobHandler;
 import com.xxl.job.core.log.XxlJobFileAppender;
@@ -29,15 +12,19 @@ import com.xxl.job.core.thread.JobThread;
 import com.xxl.job.core.thread.TriggerCallbackThread;
 import com.xxl.job.core.util.NetUtils;
 import com.xxl.rpc.registry.ServiceRegistry;
-import com.xxl.rpc.remoting.invoker.XxlRpcInvokerFactory;
-import com.xxl.rpc.remoting.invoker.call.CallType;
-import com.xxl.rpc.remoting.invoker.reference.XxlRpcReferenceBean;
-import com.xxl.rpc.remoting.invoker.route.LoadBalance;
-import com.xxl.rpc.remoting.net.NetEnum;
+import com.xxl.rpc.remoting.net.impl.netty_http.server.NettyHttpServer;
 import com.xxl.rpc.remoting.provider.XxlRpcProviderFactory;
 import com.xxl.rpc.serialize.Serializer;
+import com.xxl.rpc.serialize.impl.HessianSerializer;
 import com.xxl.rpc.util.IpUtil;
 import com.xxl.rpc.util.NetUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.util.StringUtils;
+
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 /**
  * Created by xuxueli on 2016/3/2 21:14.
@@ -127,35 +114,18 @@ public class XxlJobExecutor  {
         // destory TriggerCallbackThread
         TriggerCallbackThread.getInstance().toStop();
 
-        // destory invoker
-        stopInvokerFactory();
     }
 
 
     // ---------------------- admin-client (rpc invoker) ----------------------
     private static List<AdminBiz> adminBizList;
-    private static Serializer serializer;
+    private static Serializer serializer = new HessianSerializer();
     private void initAdminBizList(String adminAddresses, String accessToken) throws Exception {
-        serializer = Serializer.SerializeEnum.HESSIAN.getSerializer();
         if (adminAddresses!=null && adminAddresses.trim().length()>0) {
             for (String address: adminAddresses.trim().split(",")) {
                 if (address!=null && address.trim().length()>0) {
 
-                    String addressUrl = address.concat(AdminBiz.MAPPING);
-
-                    AdminBiz adminBiz = (AdminBiz) new XxlRpcReferenceBean(
-                            NetEnum.NETTY_HTTP,
-                            serializer,
-                            CallType.SYNC,
-                            LoadBalance.ROUND,
-                            AdminBiz.class,
-                            null,
-                            3000,
-                            addressUrl,
-                            accessToken,
-                            null,
-                            null
-                    ).getObject();
+                    AdminBiz adminBiz = new AdminBizClient(address.trim(), accessToken);
 
                     if (adminBizList == null) {
                         adminBizList = new ArrayList<AdminBiz>();
@@ -163,14 +133,6 @@ public class XxlJobExecutor  {
                     adminBizList.add(adminBiz);
                 }
             }
-        }
-    }
-    private void stopInvokerFactory(){
-        // stop invoker factory
-        try {
-            XxlRpcInvokerFactory.getInstance().stop();
-        } catch (Exception e) {
-            logger.error(e.getMessage(), e);
         }
     }
     public static List<AdminBiz> getAdminBizList(){
@@ -193,7 +155,16 @@ public class XxlJobExecutor  {
         serviceRegistryParam.put("address", address);
 
         xxlRpcProviderFactory = new XxlRpcProviderFactory();
-        xxlRpcProviderFactory.initConfig(NetEnum.NETTY_HTTP, Serializer.SerializeEnum.HESSIAN.getSerializer(), ip, port, accessToken, ExecutorServiceRegistry.class, serviceRegistryParam);
+
+        xxlRpcProviderFactory.setServer(NettyHttpServer.class);
+        xxlRpcProviderFactory.setSerializer(HessianSerializer.class);
+        xxlRpcProviderFactory.setCorePoolSize(20);
+        xxlRpcProviderFactory.setMaxPoolSize(200);
+        xxlRpcProviderFactory.setIp(ip);
+        xxlRpcProviderFactory.setPort(port);
+        xxlRpcProviderFactory.setAccessToken(accessToken);
+        xxlRpcProviderFactory.setServiceRegistry(ExecutorServiceRegistry.class);
+        xxlRpcProviderFactory.setServiceRegistryParam(serviceRegistryParam);
 
         // add services
         xxlRpcProviderFactory.addService(ExecutorBiz.class.getName(), null, new ExecutorBizImpl());
